@@ -1,6 +1,6 @@
 # Yocto BSP for LuckFox Pico Ultra W (RV1106G3)
 
-Yocto BSP for the LuckFox Pico Ultra W (Rockchip RV1106G3) — builds a complete embedded Linux image with WiFi 6, NPU (0.5 TOPS), touchscreen display, and Bluetooth 5.2.
+Yocto BSP for the LuckFox Pico Ultra W (Rockchip RV1106G3) — builds a complete embedded Linux image with WiFi 6, NPU (0.5 TOPS), touchscreen display, and Bluetooth 5.2. A second image, `luckfox-image-containers`, is a headless podman container host.
 
 **Key Technologies:** **Yocto** scarthgap | **Rockchip RV1106G3** (ARM Cortex-A7 @ 1.2 GHz) | **WiFi 6** + **Bluetooth 5.2** | **NPU** 0.5 TOPS | **LVGL** v9.2 | **Linux** 5.10 kernel
 
@@ -8,7 +8,7 @@ Yocto BSP for the LuckFox Pico Ultra W (Rockchip RV1106G3) — builds a complete
 
 - **Board:** LuckFox Pico Ultra W
 - **SoC:** Rockchip RV1106G3 (single Cortex-A7 @ 1.2GHz, 32-bit)
-- **RAM:** 128MB DDR3L (in-package, detected by DDR init blob)
+- **RAM:** 256MB DDR3L (in-package, detected by DDR init blob)
 - **Storage:** 8GB eMMC (Samsung AT2S38, HS200)
 - **Ethernet:** 100Mbps RMII (integrated RK630 PHY)
 - **WiFi/BT:** AIC8800DC (WiFi 6 2.4GHz SDIO + BLE 5.2 UART)
@@ -39,6 +39,19 @@ Yocto BSP for the LuckFox Pico Ultra W (Rockchip RV1106G3) — builds a complete
 - [x] **AIC8800DC Bluetooth** — `hci0`, BT 5.2, UART HCI @ 1.5 Mbaud, BlueZ `bluetoothd` active, advertises the hostname as its friendly name. `hciattach` is driven by a `luckfox-bt-attach.service` systemd unit that waits for the wifi driver to load first.
 - [x] **`luckfox-pico-status` webserver** (lighttpd + CGI) at `http://<ip>/` or `http://luckfox-pico.local/` via avahi mDNS
 - [x] **LVGL v9.2 framebuffer demo** (`luckfox-lvgl-demo`) — built but not auto-started. `systemctl enable --now luckfox-lvgl-demo` to take the framebuffer over from fbcon. Shows title, breathing arc, live clock, stats row, touch-counter.
+
+### Container host (`luckfox-image-containers`, validated on the board)
+
+- [x] Kernel fragment `containers.cfg`: namespaces, cgroup v2 (`cpu io memory pids`), overlayfs, veth/bridge, netfilter (IPv4 + IPv6), seccomp, zram
+- [x] **podman 5.0.3** with crun, netavark and aardvark-dns from meta-virtualization; `docker` CLI wrapper included
+- [x] `podman pull` / `podman run` of `linux/arm/v7` images, `--memory` limits, container DNS, published ports
+- [x] `--restart=always` containers come back after a reboot (`podman-restart.service`)
+- [x] Root filesystem grows to fill the eMMC on first boot (`luckfox-growfs`)
+- [x] zram swap; `LUCKFOX_CMA_SIZE = "36M"` raises `MemTotal` from 154 MB to 184 MB
+- [x] No `debug-tweaks`: root is locked, login by SSH key only
+- [x] Optional static WiFi address (`LUCKFOX_WIFI_ADDRESS` / `_GATEWAY` / `_DNS`)
+
+See [Container host image (podman)](#container-host-image-podman) and [`DOCKER_PLAN.md`](DOCKER_PLAN.md).
 
 ### Deferred (see `docs/ROADMAP.md`)
 
@@ -201,6 +214,54 @@ bitbake luckfox-image-minimal
 
 Output: `build/tmp-glibc/deploy/images/luckfox-pico-ultra-w/`
 
+## Container host image (podman)
+
+`luckfox-image-containers` is `luckfox-image-minimal` without the display, NPU and
+Bluetooth demos, plus podman (with crun and netavark), zram swap and a root filesystem
+that grows to fill the eMMC on first boot. Background and measurements are in
+[`DOCKER_PLAN.md`](DOCKER_PLAN.md).
+
+It needs four more layers next to poky, all on `scarthgap`:
+
+```bash
+git clone -b scarthgap https://github.com/openembedded/meta-openembedded.git
+git clone -b scarthgap https://git.yoctoproject.org/meta-virtualization
+
+# in the build directory
+bitbake-layers add-layer ../../meta-openembedded/meta-oe \
+    ../../meta-openembedded/meta-python ../../meta-openembedded/meta-networking \
+    ../../meta-openembedded/meta-filesystems ../../meta-virtualization
+```
+
+The image has no blank root password, so it will not build without an SSH key. In
+`conf/local.conf`:
+
+```
+LUCKFOX_SSH_AUTHORIZED_KEYS_FILE = "${TOPDIR}/conf/authorized_keys"
+
+# optional: static address on wlan0 instead of DHCP
+LUCKFOX_WIFI_ADDRESS = "192.168.1.50/24"
+LUCKFOX_WIFI_GATEWAY = "192.168.1.1"
+LUCKFOX_WIFI_DNS = "192.168.1.1"
+```
+
+Then `bitbake luckfox-image-containers` and flash the resulting
+`luckfox-image-containers-luckfox-pico-ultra-w.rootfs.wic` as below.
+
+What differs from the minimal image:
+
+- **Kernel**: `containers.cfg` (namespaces, cgroup v2 controllers, overlayfs, veth,
+  bridge, netfilter, seccomp, zram) is merged for every image built from this layer,
+  so the minimal image gets the same kernel.
+- **CMA**: set `LUCKFOX_CMA_SIZE = "36M"` in `local.conf` to shrink the DMA-heap pool
+  from the default `66M` to the value the stock Luckfox image uses. That raises
+  `MemTotal` from 154 MB to 184 MB. It is a kernel recipe variable (it rewrites the
+  device tree bootargs, which override `extlinux.conf`), so it applies to every image
+  built with that `local.conf`.
+- **Pull staging**: podman stages image layers in `/var/lib/containers/tmp`, not in
+  the tmpfs at `/var/tmp`.
+- Only `linux/arm/v7` images run on this board.
+
 ## Flashing a source build
 
 Same recipe as [Flash the prebuilt image](#flash-the-prebuilt-image-no-build-required) above, just point `rkdeveloptool` at the WIC your build produced. The `rv1106_ddr_*.bin` and `rv1106_usbplug_*.bin` helper blobs are already fetched by the `rkbin` recipe during the build:
@@ -212,6 +273,18 @@ WIC=build/tmp-glibc/deploy/images/luckfox-pico-ultra-w/luckfox-image-minimal-luc
 rkdeveloptool ld
 rkdeveloptool db ${RKBIN}/rv1106_ddr_924MHz_v1.15.bin
 rkdeveloptool ul ${RKBIN}/rv1106_usbplug_v1.09.bin
+rkdeveloptool wl 0 ${WIC}
+rkdeveloptool rd
+```
+
+If `rkdeveloptool db` answers `Opening loader failed, exiting download boot!`, your
+build of the tool only accepts a merged loader (seen with upstream 1.32). Build one
+from the same blobs and skip the `ul` step:
+
+```bash
+cd build/tmp-glibc/work/*/u-boot-rockchip-rv1106/*/rkbin
+tools/boot_merger RKBOOT/RV1106MINIALL.ini      # writes rv1106_download_v1.15.108.bin
+rkdeveloptool db rv1106_download_v1.15.108.bin
 rkdeveloptool wl 0 ${WIC}
 rkdeveloptool rd
 ```

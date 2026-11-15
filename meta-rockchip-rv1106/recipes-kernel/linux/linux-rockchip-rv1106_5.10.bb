@@ -18,6 +18,7 @@ SRC_URI = " \
     file://ext4-builtin.cfg \
     file://rv1106-emmc.cfg \
     file://rv1106-optee.cfg \
+    file://containers.cfg \
     file://logo_linux_clut224.ppm \
 "
 
@@ -35,6 +36,14 @@ inherit kernel
 S = "${WORKDIR}/git/sysdrv/source/kernel"
 
 KBUILD_DEFCONFIG = "rv1106_defconfig"
+
+# Size of the Rockchip DMA-heap CMA pool (rk_dma_heap_cma= in the device tree
+# bootargs). U-Boot merges the DT bootargs over the extlinux.conf append line
+# and the DT value wins, so this is the place that changes it. 66M is what the
+# RGB panel and NPU demos need; a headless container host can use 36M (the
+# stock Luckfox value) and get the difference back as ordinary RAM.
+LUCKFOX_CMA_SIZE ?= "66M"
+do_configure[vardeps] += "LUCKFOX_CMA_SIZE"
 
 # Install out-of-tree DTS/DTSI files and apply patches
 do_configure:prepend() {
@@ -61,6 +70,8 @@ do_configure:prepend() {
         [ -f "$dtsi" ] || continue
         cp "$dtsi" ${S}/arch/arm/boot/dts/
     done
+    sed -i 's/rk_dma_heap_cma=[0-9]*[KMG]/rk_dma_heap_cma=${LUCKFOX_CMA_SIZE}/' \
+        ${S}/arch/arm/boot/dts/rv1106-luckfox-pico-ultra-ipc.dtsi
 
     for dts in ${WORKDIR}/*.dts; do
         [ -f "$dts" ] || continue

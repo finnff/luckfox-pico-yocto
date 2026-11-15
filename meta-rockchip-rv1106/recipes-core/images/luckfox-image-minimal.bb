@@ -41,7 +41,9 @@ IMAGE_OVERHEAD_FACTOR ?= "1.2"
 
 # No root password for initial bringup. For production builds, drop
 # debug-tweaks and ship a locked root with SSH key auth.
-EXTRA_IMAGE_FEATURES += "debug-tweaks"
+# Set LUCKFOX_DEBUG_TWEAKS = "" (local.conf or a derived image) to drop it.
+LUCKFOX_DEBUG_TWEAKS ?= "debug-tweaks"
+EXTRA_IMAGE_FEATURES += "${LUCKFOX_DEBUG_TWEAKS}"
 
 # Auto-load kernel modules at boot.
 #   rknpu   — /dev/rknpu for the NPU demos.

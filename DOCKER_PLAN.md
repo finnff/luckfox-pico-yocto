@@ -1,7 +1,8 @@
 # Container support on the Luckfox Pico Ultra W — feasibility and plan
 
-Status: **feasibility check done, nothing built or flashed yet.** Written 2026-11-15
-against this repo at `4378d0e` (release v1.1.0).
+Status: **implemented, flashed and validated on the board.** Feasibility check written
+2026-11-15 against `4378d0e` (release v1.1.0); implementation added the same day, see
+"Implementation status" below.
 
 Goal: replace the stock Ubuntu 22.04 image on a Luckfox Pico Ultra W with the Yocto
 image from this repo, and run OCI containers ("dockers") on it.
@@ -15,6 +16,73 @@ image from this repo, and run OCI containers ("dockers") on it.
 
 Every statement below is marked as either *verified* (I ran it) or *not verified*
 (from documentation or general knowledge). Section 8 lists the open items in one place.
+
+## Implementation status
+
+What exists in the layer now:
+
+| Plan item | Where |
+|---|---|
+| Kernel fragment (section 6, plus IPv6 netfilter) | `recipes-kernel/linux/files/containers.cfg` |
+| Image: podman, crun, netavark, zram, no demos | `dynamic-layers/virtualization-layer/recipes-core/images/luckfox-image-containers.bb` |
+| Distro features, crun/netavark selection | `conf/distro/luckfox-rv1106.conf` |
+| Root grows to fill the eMMC on first boot | `recipes-support/luckfox-growfs/` |
+| Pulls staged on eMMC, not in tmpfs | `dynamic-layers/.../luckfox-container-config/` |
+| `rk_dma_heap_cma=36M` | `LUCKFOX_CMA_SIZE` in the kernel recipe, set in `local.conf` |
+| 4 KiB-block root filesystem | `wic/luckfox-rv1106-emmc-containers.wks` |
+| No `debug-tweaks`; root login by SSH key only | `LUCKFOX_SSH_AUTHORIZED_KEYS_FILE` |
+| Optional static WiFi address | `LUCKFOX_WIFI_ADDRESS` / `_GATEWAY` / `_DNS` |
+
+Verified on the build host (Ubuntu 24.04, build inside `crops/poky:ubuntu-22.04`):
+
+- `bitbake luckfox-image-containers` completes with poky `yocto-5.0.17`,
+  meta-openembedded `2db6aec` and meta-virtualization `6e8e757`. First build took
+  about 20 minutes on 32 cores. Versions: podman 5.0.3, crun 1.14.3, netavark 1.10.3,
+  aardvark-dns 1.10.0, conmon 2.1.10.
+- Every option in `containers.cfg` is set in the kernel `.config` that bitbake
+  resolved, with the Yocto GCC 13.4 toolchain. No extra compiler workaround was needed.
+  `zImage` is 3,169,024 bytes. The out-of-tree `aic8800dc` and `rknpu` modules build
+  against it.
+- The WIC is 474 MB: 83 MB boot (FAT) and a 332 MB ext4 root with 4 KiB blocks, 145 MB
+  used.
+- `luckfox-growfs` was run against a copy of the WIC on a 7.4 GB loop device with the
+  root partition mounted: the partition and filesystem grew to 7.0 GB and `e2fsck`
+  was clean afterwards.
+
+Verified on the board (2026-11-15, flashed over USB in maskrom mode):
+
+- The image boots, WiFi comes up at the configured static address, and root login
+  works by SSH key. No failed systemd units. `aic8800_fdrv`, `aic8800_bsp`, `rknpu`
+  and `video_rkcif` are loaded. The display was not checked (no panel driven by this
+  image).
+- `luckfox-growfs` grew the root filesystem to 6.9 GB on first boot; 145 MB used.
+- cgroup v2 with `cpu io memory pids`. `podman info` reports crun, the systemd cgroup
+  manager, overlay storage, netavark and seccomp enabled.
+- `podman pull docker.io/library/alpine` took 8.3 s; `podman run --rm alpine uname -a`
+  took 3.0 s. Outbound network and DNS work from the default bridge.
+- `--memory 32m` gives `memory.max` = 33554432 inside the container.
+- On a user-defined network, one container resolved another by name (aardvark-dns),
+  and a published port (`-p 8080:80`, nginx) was reachable from the LAN.
+- A `--restart=always` container was running again 17 s after a reboot.
+- Memory with `rk_dma_heap_cma=66M`: `MemTotal` 154 MB, zram swap 150 MB. With `36M`:
+  `MemTotal` 184 MB, `CmaTotal` 46 MB, zram swap 180 MB, about 135 MB available at
+  idle with one nginx container running (31 MB used).
+
+Found during validation:
+
+- **CMA cannot be set from `extlinux.conf`.** U-Boot merges the device tree bootargs
+  over the extlinux `append` line and the DT value wins, so the first flash still ran
+  with 66M. The size is now the kernel recipe variable `LUCKFOX_CMA_SIZE` (default
+  `66M`), which rewrites the DT bootargs. The 36M device tree was copied to the boot
+  partition of the running board and verified after a reboot; the rebuilt WIC carries
+  the same change but has not been flashed as a whole.
+- **`rkdeveloptool db` with the raw DDR blob failed** on upstream rkdeveloptool 1.32
+  (`Opening loader failed`). A merged loader from rkbin's `boot_merger` and
+  `RKBOOT/RV1106MINIALL.ini` worked. See "Flashing a source build" in `README.md`.
+
+Not done: phases 1 and 2 as separate flashes; the baseline image was never flashed on
+its own. The `cpuset` controller is not in the fragment. Longer-running load, a pull
+of a large image, and the NPU and camera with the 36M pool were not tested.
 
 ## 1. The board as surveyed
 
@@ -344,17 +412,12 @@ mk KCFLAGS='-Wno-error' CC=arm-linux-gnu-gcc -j"$(nproc)" zImage
 
 ## 8. Not verified yet
 
-- The kernel with these options **boots** on the board and the vendor drivers
-  (AIC8800DC, RKNPU, display) still work.
-- The bitbake build with `meta-virtualization` completes for this machine, and the
-  exact recipe names, versions and required `DISTRO_FEATURES`.
-- `MemTotal` and idle RAM under the Yocto image, with and without the 66M CMA pool.
-- Real RAM use of Podman or Docker on this board. The figures in section 3 are general
-  estimates.
-- How low `rk_dma_heap_cma` can go before the NPU or camera fail.
-- The first-boot rootfs grow mechanism on this MBR layout.
-- Total build time. A rough expectation is a few hours for the first build because of
-  the Go and Rust toolchains.
+Most of the original list is now answered in "Implementation status". Still open:
+
+- The display, and the NPU and camera in actual use (the modules load; nothing was
+  run on them).
+- How low `rk_dma_heap_cma` can go before the NPU or camera fail. 36M boots.
+- RAM use under a real container workload, and pull time for a large image.
 
 ## Sources
 

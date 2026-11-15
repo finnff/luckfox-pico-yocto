@@ -18,6 +18,15 @@ LUCKFOX_WIFI_SSID ??= ""
 LUCKFOX_WIFI_PSK ??= ""
 LUCKFOX_WIFI_COUNTRY ??= "00"
 
+# Optional static IPv4 configuration for wlan0 instead of DHCP, also from
+# local.conf. Address is in CIDR form; DNS takes a space-separated list.
+#   LUCKFOX_WIFI_ADDRESS = "192.168.1.50/24"
+#   LUCKFOX_WIFI_GATEWAY = "192.168.1.1"
+#   LUCKFOX_WIFI_DNS = "192.168.1.1"
+LUCKFOX_WIFI_ADDRESS ??= ""
+LUCKFOX_WIFI_GATEWAY ??= ""
+LUCKFOX_WIFI_DNS ??= ""
+
 do_install:append() {
     # wpa_supplicant config — substitute credentials from local.conf
     install -d ${D}${sysconfdir}/wpa_supplicant
@@ -53,6 +62,16 @@ EOF
     install -d ${D}${sysconfdir}/systemd/network
     install -m 0644 ${WORKDIR}/wlan0.network ${D}${sysconfdir}/systemd/network/20-wlan0.network
     install -m 0644 ${WORKDIR}/end0.network ${D}${sysconfdir}/systemd/network/10-end0.network
+
+    if [ -n "${LUCKFOX_WIFI_ADDRESS}" ]; then
+        sed -i -e '/^DHCP=/d' \
+            -e "/^\[Network\]/a Address=${LUCKFOX_WIFI_ADDRESS}" \
+            ${D}${sysconfdir}/systemd/network/20-wlan0.network
+        [ -z "${LUCKFOX_WIFI_GATEWAY}" ] || \
+            echo "Gateway=${LUCKFOX_WIFI_GATEWAY}" >> ${D}${sysconfdir}/systemd/network/20-wlan0.network
+        [ -z "${LUCKFOX_WIFI_DNS}" ] || \
+            echo "DNS=${LUCKFOX_WIFI_DNS}" >> ${D}${sysconfdir}/systemd/network/20-wlan0.network
+    fi
 }
 
 # Enable the wpa_supplicant + systemd-networkd units at first boot.

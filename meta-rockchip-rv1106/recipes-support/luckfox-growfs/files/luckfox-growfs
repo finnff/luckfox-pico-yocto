@@ -1,0 +1,28 @@
+#!/bin/sh
+# Grow the root partition to the end of the disk, then grow the filesystem.
+# The WIC is kept small so flashing is fast; this claims the rest of the eMMC
+# on first boot. Works on the mounted root: the partition only grows at its
+# end, the kernel is told through BLKPG (partx), and ext4 resizes online.
+set -u
+
+STAMP=/var/lib/luckfox-growfs.done
+
+devno=$(mountpoint -d /)
+sys=$(readlink -f "/sys/dev/block/$devno")
+if [ ! -f "$sys/partition" ]; then
+    echo "root is not on a partition, nothing to do"
+    exit 0
+fi
+partnum=$(cat "$sys/partition")
+part=/dev/$(basename "$sys")
+disk=/dev/$(basename "$(dirname "$sys")")
+
+echo "growing $part (partition $partnum of $disk)"
+# sfdisk cannot re-read the table of a busy disk and may report that as an
+# error; the result is checked below instead.
+echo ", +" | sfdisk --force --no-reread -N "$partnum" "$disk" || true
+partx -u -n "$partnum" "$disk" || true
+
+resize2fs "$part" || exit 1
+mkdir -p "$(dirname "$STAMP")"
+touch "$STAMP"

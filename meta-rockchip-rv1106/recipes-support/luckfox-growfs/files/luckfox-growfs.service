@@ -1,0 +1,13 @@
+[Unit]
+Description=Grow the root filesystem to fill the eMMC (first boot)
+ConditionPathExists=!/var/lib/luckfox-growfs.done
+After=systemd-remount-fs.service
+Before=podman.service podman.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/luckfox-growfs
+
+[Install]
+WantedBy=multi-user.target
