@@ -24,6 +24,11 @@ IMAGE_INSTALL:remove = " \
 IMAGE_INSTALL:append = " \
     podman \
     crun \
+    docker-compose \
+    python3-modules \
+    python3-pip \
+    vim \
+    htop \
     ca-certificates \
     iptables \
     luckfox-container-config \
@@ -71,3 +76,9 @@ enable_podman_restart() {
 }
 
 ROOTFS_POSTPROCESS_COMMAND:append = " enable_podman_restart;"
+
+# Deployment scripts commonly start with `#!/usr/bin/env python`.
+luckfox_python_symlink() {
+    ln -sf python3 ${IMAGE_ROOTFS}${bindir}/python
+}
+ROOTFS_POSTPROCESS_COMMAND += "luckfox_python_symlink;"

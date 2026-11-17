@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * UART3 on the pin header as /dev/ttyS3: TX GPIO1_A0 (pin 32), RX GPIO1_A1
+ * (pin 33). These pins are not shared with the RGB panel. Selected with
+ * LUCKFOX_DTS_EXTRA.
+ */
+
+&uart3 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3m0_xfer>;
+};

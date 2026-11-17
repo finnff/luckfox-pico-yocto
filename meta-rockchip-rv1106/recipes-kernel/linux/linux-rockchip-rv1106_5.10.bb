@@ -15,6 +15,7 @@ SRC_URI = " \
     git://github.com/LuckfoxTECH/luckfox-pico.git;protocol=https;branch=main;destsuffix=git \
     file://rv1106g-luckfox-pico-ultra-w.dts \
     file://rv1106-luckfox-pico-ultra-ipc.dtsi \
+    file://rv1106-luckfox-header-uart3.dtsi \
     file://ext4-builtin.cfg \
     file://rv1106-emmc.cfg \
     file://rv1106-optee.cfg \
@@ -44,6 +45,12 @@ KBUILD_DEFCONFIG = "rv1106_defconfig"
 # stock Luckfox value) and get the difference back as ordinary RAM.
 LUCKFOX_CMA_SIZE ?= "66M"
 do_configure[vardeps] += "LUCKFOX_CMA_SIZE"
+
+# Extra .dtsi files (from SRC_URI) included at the end of the board device
+# tree. "rv1106-luckfox-header-uart3.dtsi" puts UART3 on header pins 32/33
+# (GPIO1_A0/A1) as /dev/ttyS3.
+LUCKFOX_DTS_EXTRA ?= ""
+do_configure[vardeps] += "LUCKFOX_DTS_EXTRA"
 
 # Install out-of-tree DTS/DTSI files and apply patches
 do_configure:prepend() {
@@ -76,6 +83,9 @@ do_configure:prepend() {
     for dts in ${WORKDIR}/*.dts; do
         [ -f "$dts" ] || continue
         cp "$dts" ${S}/arch/arm/boot/dts/
+        for extra in ${LUCKFOX_DTS_EXTRA}; do
+            echo "#include \"$extra\"" >> ${S}/arch/arm/boot/dts/$(basename "$dts")
+        done
         dtb=$(basename "$dts" .dts).dtb
         # Add to Makefile if not already present
         if ! grep -q "$dtb" ${S}/arch/arm/boot/dts/Makefile; then
