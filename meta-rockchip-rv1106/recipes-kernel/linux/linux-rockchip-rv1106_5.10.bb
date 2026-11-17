@@ -15,9 +15,11 @@ SRC_URI = " \
     git://github.com/LuckfoxTECH/luckfox-pico.git;protocol=https;branch=main;destsuffix=git \
     file://rv1106g-luckfox-pico-ultra-w.dts \
     file://rv1106-luckfox-pico-ultra-ipc.dtsi \
+    file://rv1106-luckfox-header-uart3.dtsi \
     file://ext4-builtin.cfg \
     file://rv1106-emmc.cfg \
     file://rv1106-optee.cfg \
+    file://containers.cfg \
     file://logo_linux_clut224.ppm \
 "
 
@@ -35,6 +37,20 @@ inherit kernel
 S = "${WORKDIR}/git/sysdrv/source/kernel"
 
 KBUILD_DEFCONFIG = "rv1106_defconfig"
+
+# Size of the Rockchip DMA-heap CMA pool (rk_dma_heap_cma= in the device tree
+# bootargs). U-Boot merges the DT bootargs over the extlinux.conf append line
+# and the DT value wins, so this is the place that changes it. 66M is what the
+# RGB panel and NPU demos need; a headless container host can use 36M (the
+# stock Luckfox value) and get the difference back as ordinary RAM.
+LUCKFOX_CMA_SIZE ?= "66M"
+do_configure[vardeps] += "LUCKFOX_CMA_SIZE"
+
+# Extra .dtsi files (from SRC_URI) included at the end of the board device
+# tree. "rv1106-luckfox-header-uart3.dtsi" puts UART3 on header pins 32/33
+# (GPIO1_A0/A1) as /dev/ttyS3.
+LUCKFOX_DTS_EXTRA ?= ""
+do_configure[vardeps] += "LUCKFOX_DTS_EXTRA"
 
 # Install out-of-tree DTS/DTSI files and apply patches
 do_configure:prepend() {
@@ -61,10 +77,15 @@ do_configure:prepend() {
         [ -f "$dtsi" ] || continue
         cp "$dtsi" ${S}/arch/arm/boot/dts/
     done
+    sed -i 's/rk_dma_heap_cma=[0-9]*[KMG]/rk_dma_heap_cma=${LUCKFOX_CMA_SIZE}/' \
+        ${S}/arch/arm/boot/dts/rv1106-luckfox-pico-ultra-ipc.dtsi
 
     for dts in ${WORKDIR}/*.dts; do
         [ -f "$dts" ] || continue
         cp "$dts" ${S}/arch/arm/boot/dts/
+        for extra in ${LUCKFOX_DTS_EXTRA}; do
+            echo "#include \"$extra\"" >> ${S}/arch/arm/boot/dts/$(basename "$dts")
+        done
         dtb=$(basename "$dts" .dts).dtb
         # Add to Makefile if not already present
         if ! grep -q "$dtb" ${S}/arch/arm/boot/dts/Makefile; then
